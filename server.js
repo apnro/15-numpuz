@@ -8,6 +8,12 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname)));
 
+// wraps an async route handler so thrown errors/rejections become a JSON 500
+// instead of crashing the process or hanging the request
+function ah(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
 function newToken() {
   return crypto.randomBytes(24).toString('hex');
 }
@@ -22,10 +28,10 @@ function publicUser(u) {
   };
 }
 
-function auth(req, res, next) {
+const auth = ah(async (req, res, next) => {
   const header = req.headers['authorization'] || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  const db = load();
+  const db = await load();
   const username = token && db.tokens[token];
   if (!username || !db.users[username]) {
     return res.status(401).json({ error: 'Not logged in' });
@@ -33,17 +39,17 @@ function auth(req, res, next) {
   req.username = username;
   req.db = db;
   next();
-}
+});
 
 /* ---------- auth ---------- */
 
-app.post('/api/signup', (req, res) => {
+app.post('/api/signup', ah(async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password required' });
   }
   const key = username.trim().toLowerCase();
-  const db = load();
+  const db = await load();
   if (db.users[key]) return res.status(409).json({ error: 'That username is taken' });
 
   db.users[key] = {
@@ -56,23 +62,23 @@ app.post('/api/signup', (req, res) => {
   };
   const token = newToken();
   db.tokens[token] = key;
-  save(db);
+  await save(db);
   res.json({ token, user: publicUser(db.users[key]) });
-});
+}));
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', ah(async (req, res) => {
   const { username, password } = req.body || {};
   const key = (username || '').trim().toLowerCase();
-  const db = load();
+  const db = await load();
   const user = db.users[key];
   if (!user || !bcrypt.compareSync(password || '', user.passwordHash)) {
     return res.status(401).json({ error: 'Wrong username or password' });
   }
   const token = newToken();
   db.tokens[token] = key;
-  save(db);
+  await save(db);
   res.json({ token, user: publicUser(user) });
-});
+}));
 
 app.get('/api/me', auth, (req, res) => {
   res.json({ user: publicUser(req.db.users[req.username]) });
@@ -80,24 +86,24 @@ app.get('/api/me', auth, (req, res) => {
 
 /* ---------- profile ---------- */
 
-app.post('/api/avatar', auth, (req, res) => {
+app.post('/api/avatar', auth, ah(async (req, res) => {
   const { dataUrl } = req.body || {};
   const db = req.db;
   db.users[req.username].avatar = dataUrl || '';
-  save(db);
+  await save(db);
   res.json({ user: publicUser(db.users[req.username]) });
-});
+}));
 
-app.post('/api/solo/finish', auth, (req, res) => {
+app.post('/api/solo/finish', auth, ah(async (req, res) => {
   const time = Number(req.body && req.body.time);
   const db = req.db;
   const u = db.users[req.username];
   if (Number.isFinite(time) && (u.soloBest === null || time < u.soloBest)) {
     u.soloBest = time;
   }
-  save(db);
+  await save(db);
   res.json({ user: publicUser(u) });
-});
+}));
 
 /* ---------- matchmaking ---------- */
 
@@ -125,21 +131,21 @@ function matchInfo(db, matchId) {
   return { matchId, seed: m.seed, players: m.players, playersDisplay };
 }
 
-app.post('/api/queue/join', auth, (req, res) => {
+app.post('/api/queue/join', auth, ah(async (req, res) => {
   const db = req.db;
   if (!db.queue.includes(req.username)) db.queue.push(req.username);
   tryMatch(db);
-  save(db);
+  await save(db);
   const matchId = db.matchfor[req.username];
   res.json(matchId ? { matched: true, ...matchInfo(db, matchId) } : { matched: false });
-});
+}));
 
-app.post('/api/queue/leave', auth, (req, res) => {
+app.post('/api/queue/leave', auth, ah(async (req, res) => {
   const db = req.db;
   db.queue = db.queue.filter(u => u !== req.username);
-  save(db);
+  await save(db);
   res.json({ ok: true });
-});
+}));
 
 app.get('/api/queue/status', auth, (req, res) => {
   const db = req.db;
@@ -156,17 +162,17 @@ app.get('/api/match/:id', auth, (req, res) => {
   res.json({ match: m });
 });
 
-app.post('/api/match/:id/progress', auth, (req, res) => {
+app.post('/api/match/:id/progress', auth, ah(async (req, res) => {
   const db = req.db;
   const m = db.matches[req.params.id];
   if (!m) return res.status(404).json({ error: 'Match not found' });
   const { moves, time } = req.body || {};
   m.progress[req.username] = { moves, time };
-  save(db);
+  await save(db);
   res.json({ ok: true });
-});
+}));
 
-app.post('/api/match/:id/finish', auth, (req, res) => {
+app.post('/api/match/:id/finish', auth, ah(async (req, res) => {
   const db = req.db;
   const m = db.matches[req.params.id];
   if (!m) return res.status(404).json({ error: 'Match not found' });
@@ -181,13 +187,13 @@ app.post('/api/match/:id/finish', auth, (req, res) => {
     u.wins = (u.wins || 0) + 1;
     winner = true;
   }
-  save(db);
+  await save(db);
   res.json({ winner, user: publicUser(u) });
-});
+}));
 
 /* ---------- friends ---------- */
 
-app.post('/api/friends/request', auth, (req, res) => {
+app.post('/api/friends/request', auth, ah(async (req, res) => {
   const targetKey = ((req.body && req.body.username) || '').trim().toLowerCase();
   const db = req.db;
   if (!targetKey || targetKey === req.username) {
@@ -204,11 +210,11 @@ app.post('/api/friends/request', auth, (req, res) => {
   if (them.friendRequests.includes(req.username)) return res.status(400).json({ error: 'Request already sent' });
 
   them.friendRequests.push(req.username);
-  save(db);
+  await save(db);
   res.json({ ok: true });
-});
+}));
 
-app.post('/api/friends/accept', auth, (req, res) => {
+app.post('/api/friends/accept', auth, ah(async (req, res) => {
   const otherKey = ((req.body && req.body.username) || '').trim().toLowerCase();
   const db = req.db;
   const me = db.users[req.username];
@@ -224,18 +230,18 @@ app.post('/api/friends/accept', auth, (req, res) => {
     other.friends = other.friends || [];
     if (!other.friends.includes(req.username)) other.friends.push(req.username);
   }
-  save(db);
+  await save(db);
   res.json({ ok: true });
-});
+}));
 
-app.post('/api/friends/decline', auth, (req, res) => {
+app.post('/api/friends/decline', auth, ah(async (req, res) => {
   const otherKey = ((req.body && req.body.username) || '').trim().toLowerCase();
   const db = req.db;
   const me = db.users[req.username];
   me.friendRequests = (me.friendRequests || []).filter(u => u !== otherKey);
-  save(db);
+  await save(db);
   res.json({ ok: true });
-});
+}));
 
 app.get('/api/friends', auth, (req, res) => {
   const db = req.db;
@@ -245,7 +251,7 @@ app.get('/api/friends', auth, (req, res) => {
   res.json({ friends, requests });
 });
 
-app.post('/api/friends/challenge', auth, (req, res) => {
+app.post('/api/friends/challenge', auth, ah(async (req, res) => {
   const targetKey = ((req.body && req.body.username) || '').trim().toLowerCase();
   const db = req.db;
   const me = db.users[req.username];
@@ -253,14 +259,14 @@ app.post('/api/friends/challenge', auth, (req, res) => {
   if (!db.users[targetKey]) return res.status(404).json({ error: 'No user with that name' });
 
   const matchId = createMatchBetween(db, req.username, targetKey);
-  save(db);
+  await save(db);
   res.json(matchInfo(db, matchId));
-});
+}));
 
 /* ---------- leaderboard ---------- */
 
-app.get('/api/leaderboard', (req, res) => {
-  const db = load();
+app.get('/api/leaderboard', ah(async (req, res) => {
+  const db = await load();
   const list = Object.values(db.users).map(u => ({
     username: u.username,
     avatar: u.avatar,
@@ -275,6 +281,12 @@ app.get('/api/leaderboard', (req, res) => {
     return aSolo - bSolo;
   });
   res.json({ leaderboard: list.slice(0, 50) });
+}));
+
+// turns any uncaught error from the routes above into a clean JSON response
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: err.message || 'Server error' });
 });
 
 const PORT = process.env.PORT || 3000;
