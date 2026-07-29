@@ -101,16 +101,21 @@ app.post('/api/solo/finish', auth, (req, res) => {
 
 /* ---------- matchmaking ---------- */
 
+function createMatchBetween(db, a, b) {
+  const matchId = Date.now() + '_' + a + '_' + b;
+  const seed = Math.floor(Math.random() * 1e9);
+  db.matches[matchId] = { players: [a, b], seed, progress: {}, finished: {} };
+  db.matchfor[a] = matchId;
+  db.matchfor[b] = matchId;
+  return matchId;
+}
+
 function tryMatch(db) {
   while (db.queue.length >= 2) {
     const a = db.queue.shift();
     const b = db.queue.shift();
     if (a === b) continue;
-    const matchId = Date.now() + '_' + a + '_' + b;
-    const seed = Math.floor(Math.random() * 1e9);
-    db.matches[matchId] = { players: [a, b], seed, progress: {}, finished: {} };
-    db.matchfor[a] = matchId;
-    db.matchfor[b] = matchId;
+    createMatchBetween(db, a, b);
   }
 }
 
@@ -178,6 +183,98 @@ app.post('/api/match/:id/finish', auth, (req, res) => {
   }
   save(db);
   res.json({ winner, user: publicUser(u) });
+});
+
+/* ---------- friends ---------- */
+
+app.post('/api/friends/request', auth, (req, res) => {
+  const targetKey = ((req.body && req.body.username) || '').trim().toLowerCase();
+  const db = req.db;
+  if (!targetKey || targetKey === req.username) {
+    return res.status(400).json({ error: 'Invalid username' });
+  }
+  if (!db.users[targetKey]) return res.status(404).json({ error: 'No user with that name' });
+
+  const me = db.users[req.username];
+  const them = db.users[targetKey];
+  me.friends = me.friends || [];
+  them.friendRequests = them.friendRequests || [];
+
+  if (me.friends.includes(targetKey)) return res.status(400).json({ error: 'Already friends' });
+  if (them.friendRequests.includes(req.username)) return res.status(400).json({ error: 'Request already sent' });
+
+  them.friendRequests.push(req.username);
+  save(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/friends/accept', auth, (req, res) => {
+  const otherKey = ((req.body && req.body.username) || '').trim().toLowerCase();
+  const db = req.db;
+  const me = db.users[req.username];
+  me.friendRequests = me.friendRequests || [];
+  if (!me.friendRequests.includes(otherKey)) return res.status(400).json({ error: 'No such request' });
+
+  me.friendRequests = me.friendRequests.filter(u => u !== otherKey);
+  me.friends = me.friends || [];
+  if (!me.friends.includes(otherKey)) me.friends.push(otherKey);
+
+  const other = db.users[otherKey];
+  if (other) {
+    other.friends = other.friends || [];
+    if (!other.friends.includes(req.username)) other.friends.push(req.username);
+  }
+  save(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/friends/decline', auth, (req, res) => {
+  const otherKey = ((req.body && req.body.username) || '').trim().toLowerCase();
+  const db = req.db;
+  const me = db.users[req.username];
+  me.friendRequests = (me.friendRequests || []).filter(u => u !== otherKey);
+  save(db);
+  res.json({ ok: true });
+});
+
+app.get('/api/friends', auth, (req, res) => {
+  const db = req.db;
+  const me = db.users[req.username];
+  const friends = (me.friends || []).map(k => db.users[k] ? publicUser(db.users[k]) : null).filter(Boolean);
+  const requests = (me.friendRequests || []).map(k => db.users[k] ? publicUser(db.users[k]) : null).filter(Boolean);
+  res.json({ friends, requests });
+});
+
+app.post('/api/friends/challenge', auth, (req, res) => {
+  const targetKey = ((req.body && req.body.username) || '').trim().toLowerCase();
+  const db = req.db;
+  const me = db.users[req.username];
+  if (!(me.friends || []).includes(targetKey)) return res.status(400).json({ error: 'Not friends' });
+  if (!db.users[targetKey]) return res.status(404).json({ error: 'No user with that name' });
+
+  const matchId = createMatchBetween(db, req.username, targetKey);
+  save(db);
+  res.json(matchInfo(db, matchId));
+});
+
+/* ---------- leaderboard ---------- */
+
+app.get('/api/leaderboard', (req, res) => {
+  const db = load();
+  const list = Object.values(db.users).map(u => ({
+    username: u.username,
+    avatar: u.avatar,
+    wins: u.wins || 0,
+    soloBest: u.soloBest,
+    duoBest: u.duoBest
+  }));
+  list.sort((a, b) => {
+    if (b.wins !== a.wins) return b.wins - a.wins;
+    const aSolo = a.soloBest === null || a.soloBest === undefined ? Infinity : a.soloBest;
+    const bSolo = b.soloBest === null || b.soloBest === undefined ? Infinity : b.soloBest;
+    return aSolo - bSolo;
+  });
+  res.json({ leaderboard: list.slice(0, 50) });
 });
 
 const PORT = process.env.PORT || 3000;
