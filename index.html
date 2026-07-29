@@ -184,6 +184,8 @@
   <button class="btn" id="findMatchBtn">Find Match</button>
   <button class="btn ghost" id="playSoloBtn">Play Solo</button>
   <button class="btn ghost" id="viewProfileBtn">Profile</button>
+  <button class="btn ghost" id="viewFriendsBtn">Friends</button>
+  <button class="btn ghost" id="viewLeaderboardBtn">Leaderboard</button>
 </div>
 
 <!-- FINDING MATCH -->
@@ -206,6 +208,26 @@
     <div class="stat"><div class="num" id="statDuo">—</div><div class="lbl">BEST DUO</div></div>
   </div>
   <button class="btn ghost" id="profileBackBtn">Back</button>
+</div>
+
+<!-- FRIENDS -->
+<div id="view-friends" class="view">
+  <h1>Friends</h1>
+  <div class="row">
+    <input id="friendUserInput" type="text" placeholder="Username">
+    <button class="btn small" id="sendRequestBtn">Add</button>
+  </div>
+  <div class="error" id="friendsError">&nbsp;</div>
+  <div id="incomingRequests" style="width:100%;"></div>
+  <div id="friendsList" style="width:100%;"></div>
+  <button class="btn ghost" id="friendsBackBtn">Back</button>
+</div>
+
+<!-- LEADERBOARD -->
+<div id="view-leaderboard" class="view">
+  <h1>Leaderboard</h1>
+  <div id="leaderboardList" class="card" style="width:100%;"></div>
+  <button class="btn ghost" id="leaderboardBackBtn">Back</button>
 </div>
 
 <!-- GAME (solo + duo share this) -->
@@ -295,9 +317,11 @@ function enterHome() {
   av.style.backgroundImage = currentUser.avatar ? `url(${currentUser.avatar})` : '';
   av.textContent = currentUser.avatar ? '' : currentUser.username[0].toUpperCase();
   showView('view-home');
+  startChallengePoll();
 }
 
 document.getElementById('logoutBtn').addEventListener('click', () => {
+  stopChallengePoll();
   localStorage.removeItem('puzzleToken');
   currentUser = null;
   document.getElementById('authUser').value = '';
@@ -375,10 +399,140 @@ function resizeImageToDataUrl(file, size) {
   });
 }
 
+/* ---------- friends ---------- */
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+document.getElementById('viewFriendsBtn').addEventListener('click', openFriends);
+document.getElementById('friendsBackBtn').addEventListener('click', () => showView('view-home'));
+
+async function openFriends() {
+  showView('view-friends');
+  document.getElementById('friendsError').textContent = '\u00A0';
+  await refreshFriends();
+}
+
+async function refreshFriends() {
+  let data;
+  try { data = await apiGet('/api/friends'); } catch (e) { return; }
+
+  const reqDiv = document.getElementById('incomingRequests');
+  reqDiv.innerHTML = '';
+  data.requests.forEach(r => {
+    const row = document.createElement('div');
+    row.className = 'card row';
+    row.style.marginBottom = '8px';
+    row.style.alignItems = 'center';
+    row.innerHTML = `<div style="flex:1;display:flex;align-items:center;gap:8px;">
+      <div class="avatar small" style="background-image:url('${r.avatar || ''}')"></div>
+      <span>${escapeHtml(r.username)} wants to be friends</span>
+    </div>`;
+    const acceptBtn = document.createElement('button');
+    acceptBtn.className = 'btn small'; acceptBtn.textContent = 'Accept';
+    acceptBtn.onclick = async () => { await apiPost('/api/friends/accept', { username: r.username }); refreshFriends(); };
+    const declineBtn = document.createElement('button');
+    declineBtn.className = 'btn ghost small'; declineBtn.textContent = 'Decline';
+    declineBtn.onclick = async () => { await apiPost('/api/friends/decline', { username: r.username }); refreshFriends(); };
+    row.appendChild(acceptBtn);
+    row.appendChild(declineBtn);
+    reqDiv.appendChild(row);
+  });
+
+  const listDiv = document.getElementById('friendsList');
+  listDiv.innerHTML = '';
+  data.friends.forEach(f => {
+    const row = document.createElement('div');
+    row.className = 'card row';
+    row.style.marginBottom = '8px';
+    row.style.alignItems = 'center';
+    row.innerHTML = `<div style="flex:1;display:flex;align-items:center;gap:8px;">
+      <div class="avatar small" style="background-image:url('${f.avatar || ''}')"></div>
+      <span>${escapeHtml(f.username)}</span>
+    </div>`;
+    const challengeBtn = document.createElement('button');
+    challengeBtn.className = 'btn small'; challengeBtn.textContent = 'Challenge';
+    challengeBtn.onclick = async () => {
+      try {
+        const m = await apiPost('/api/friends/challenge', { username: f.username });
+        stopChallengePoll();
+        startGame('duo', m.matchId, { players: m.players, playersDisplay: m.playersDisplay, seed: m.seed });
+      } catch (e) {
+        document.getElementById('friendsError').textContent = e.message;
+      }
+    };
+    row.appendChild(challengeBtn);
+    listDiv.appendChild(row);
+  });
+}
+
+document.getElementById('sendRequestBtn').addEventListener('click', async () => {
+  const uname = document.getElementById('friendUserInput').value.trim();
+  const err = document.getElementById('friendsError');
+  err.textContent = '\u00A0';
+  if (!uname) return;
+  try {
+    await apiPost('/api/friends/request', { username: uname });
+    document.getElementById('friendUserInput').value = '';
+    err.textContent = 'Request sent.';
+    refreshFriends();
+  } catch (e) {
+    err.textContent = e.message;
+  }
+});
+
+/* ---------- leaderboard ---------- */
+document.getElementById('viewLeaderboardBtn').addEventListener('click', openLeaderboard);
+document.getElementById('leaderboardBackBtn').addEventListener('click', () => showView('view-home'));
+
+async function openLeaderboard() {
+  showView('view-leaderboard');
+  const listDiv = document.getElementById('leaderboardList');
+  listDiv.textContent = 'Loading…';
+  try {
+    const data = await apiGet('/api/leaderboard');
+    listDiv.innerHTML = '';
+    data.leaderboard.forEach((u, i) => {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.justifyContent = 'space-between';
+      row.style.padding = '6px 0';
+      if (i < data.leaderboard.length - 1) row.style.borderBottom = '1px solid rgba(255,246,224,0.08)';
+      row.innerHTML = `<span>${i + 1}. ${escapeHtml(u.username)}</span><span>${u.wins} wins</span>`;
+      listDiv.appendChild(row);
+    });
+    if (data.leaderboard.length === 0) listDiv.textContent = 'No games played yet.';
+  } catch (e) {
+    listDiv.textContent = 'Could not load leaderboard.';
+  }
+}
+
+/* ---------- ambient challenge polling ---------- */
+let challengePoll = null;
+function startChallengePoll() {
+  stopChallengePoll();
+  challengePoll = setInterval(async () => {
+    try {
+      const data = await apiGet('/api/queue/status');
+      if (data.matched) {
+        stopChallengePoll();
+        startGame('duo', data.matchId, { players: data.players, playersDisplay: data.playersDisplay, seed: data.seed });
+      }
+    } catch (e) {}
+  }, 2500);
+}
+function stopChallengePoll() {
+  clearInterval(challengePoll);
+  challengePoll = null;
+}
+
 /* ---------- matchmaking ---------- */
 document.getElementById('playSoloBtn').addEventListener('click', () => startGame('solo'));
 
 document.getElementById('findMatchBtn').addEventListener('click', async () => {
+  stopChallengePoll();
   showView('view-finding');
   document.getElementById('findingSub').textContent = 'Sit tight';
   try {
@@ -397,6 +551,7 @@ document.getElementById('cancelFindBtn').addEventListener('click', async () => {
   clearInterval(findingPoll);
   try { await apiPost('/api/queue/leave', {}); } catch (e) {}
   showView('view-home');
+  startChallengePoll();
 });
 
 function pollForMatch() {
@@ -679,6 +834,8 @@ function pollOpponent() {
 }
 
 function startGame(mode, id, matchMeta) {
+  stopChallengePoll();
+  clearInterval(findingPoll);
   gameMode = mode;
   matchId = id || null;
   moveCount = 0;
@@ -713,6 +870,7 @@ document.getElementById('gameBackBtn').addEventListener('click', () => {
   clearInterval(timerInterval);
   clearInterval(duoPoll);
   showView('view-home');
+  startChallengePoll();
 });
 window.addEventListener('resize', () => {
   if (document.getElementById('view-game').classList.contains('active')) refreshAllPositions(false);
