@@ -120,8 +120,78 @@
     display: flex; align-items: center; justify-content: center;
     color: #fbf1dc; font-size: 12px; overflow: hidden;
   }
-  .avatar.small { width: 40px; height: 40px; font-size: 10px; }
+  .avatar.small { width: 48px; height: 48px; font-size: 10px; flex-shrink: 0; }
   #profileAvatarInput { display: none; }
+
+  .scrollarea {
+    width: 100%;
+    max-height: 46vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .peoplerow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .peoplerow .info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .peoplerow .info .uname {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .peoplerow .actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  #inviteBadge {
+    display: inline-block;
+    background: #e0937a;
+    color: #2c1808;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 7px;
+    margin-left: 4px;
+  }
+  #inviteBadge:empty { display: none; }
+
+  .popup-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(5,3,1,0.72);
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    padding: 20px;
+  }
+  .popup-overlay.active { display: flex; }
+  .popup-card {
+    width: 100%;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    background-image: linear-gradient(rgba(20,10,4,0.7), rgba(20,10,4,0.7)), var(--tile-tex);
+    background-size: cover;
+    border-radius: 14px;
+    padding: 24px 20px;
+    box-shadow: 0 20px 44px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,246,224,0.1);
+  }
 
   .statgrid {
     display: grid;
@@ -217,6 +287,7 @@
   <button class="btn" id="findMatchBtn">Find Match</button>
   <button class="btn ghost" id="playSoloBtn">Play Solo</button>
   <button class="btn ghost" id="viewFriendsBtn">Friends</button>
+  <button class="btn ghost" id="viewInvitesBtn">Invites <span id="inviteBadge"></span></button>
   <button class="btn ghost" id="viewLeaderboardBtn">Leaderboard</button>
 </div>
 
@@ -242,6 +313,18 @@
   <button class="btn ghost" id="profileBackBtn">Back</button>
 </div>
 
+<!-- FRIEND PROFILE (read-only) -->
+<div id="view-friend-profile" class="view">
+  <h1 id="friendProfileTitle">Player</h1>
+  <div class="avatar" id="friendProfileAvatar"></div>
+  <div class="statgrid card">
+    <div class="stat"><div class="num" id="friendStatWins">0</div><div class="lbl">WINS</div></div>
+    <div class="stat"><div class="num" id="friendStatSolo">—</div><div class="lbl">BEST SOLO TIME</div></div>
+    <div class="stat"><div class="num" id="friendStatDuo">—</div><div class="lbl">BEST MATCH TIME</div></div>
+  </div>
+  <button class="btn ghost" id="friendProfileBackBtn">Back</button>
+</div>
+
 <!-- FRIENDS -->
 <div id="view-friends" class="view">
   <h1>Friends</h1>
@@ -250,15 +333,29 @@
     <button class="btn small" id="sendRequestBtn">Add</button>
   </div>
   <div class="error" id="friendsError">&nbsp;</div>
-  <div id="incomingRequests" style="width:100%;"></div>
-  <div id="friendsList" style="width:100%;"></div>
+  <div class="scrollarea">
+    <div id="incomingRequests"></div>
+    <div id="friendsList"></div>
+  </div>
   <button class="btn ghost" id="friendsBackBtn">Back</button>
+</div>
+
+<!-- INVITES -->
+<div id="view-invites" class="view">
+  <h1>Invites</h1>
+  <div class="scrollarea">
+    <div class="sub" style="margin:0 0 4px 2px;">Incoming</div>
+    <div id="incomingInvites"></div>
+    <div class="sub" style="margin:12px 0 4px 2px;">Sent</div>
+    <div id="outgoingInvites"></div>
+  </div>
+  <button class="btn ghost" id="invitesBackBtn">Back</button>
 </div>
 
 <!-- LEADERBOARD -->
 <div id="view-leaderboard" class="view">
   <h1>Leaderboard</h1>
-  <div id="leaderboardList" class="card" style="width:100%;"></div>
+  <div id="leaderboardList" class="card scrollarea"></div>
   <button class="btn ghost" id="leaderboardBackBtn">Back</button>
 </div>
 
@@ -275,6 +372,18 @@
   <div class="row">
     <button class="btn ghost small" id="newGameBtn">New Game</button>
     <button class="btn ghost small" id="gameBackBtn">Leave</button>
+  </div>
+</div>
+
+<!-- INVITE POPUP -->
+<div id="invitePopup" class="popup-overlay">
+  <div class="popup-card">
+    <div class="avatar" id="popupAvatar"></div>
+    <div id="popupText" style="text-align:center;color:#fbf1dc;"></div>
+    <div class="row">
+      <button class="btn small" id="popupAcceptBtn">Accept</button>
+      <button class="btn ghost small" id="popupDeclineBtn">Decline</button>
+    </div>
   </div>
 </div>
 
@@ -438,6 +547,19 @@ function escapeHtml(s) {
   d.textContent = s;
   return d.innerHTML;
 }
+function timeAgo(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return s + 's ago';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  const d2 = Math.floor(h / 24);
+  return d2 + 'd ago';
+}
+function avatarStyle(url) {
+  return url ? `background-image:url('${url}')` : '';
+}
 
 document.getElementById('viewFriendsBtn').addEventListener('click', openFriends);
 document.getElementById('friendsBackBtn').addEventListener('click', () => showView('view-home'));
@@ -456,21 +578,16 @@ async function refreshFriends() {
   reqDiv.innerHTML = '';
   data.requests.forEach(r => {
     const row = document.createElement('div');
-    row.className = 'card row';
-    row.style.marginBottom = '8px';
-    row.style.alignItems = 'center';
-    row.innerHTML = `<div style="flex:1;display:flex;align-items:center;gap:8px;">
-      <div class="avatar small" style="background-image:url('${r.avatar || ''}')"></div>
-      <span>${escapeHtml(r.username)} wants to be friends</span>
-    </div>`;
-    const acceptBtn = document.createElement('button');
-    acceptBtn.className = 'btn small'; acceptBtn.textContent = 'Accept';
-    acceptBtn.onclick = async () => { await apiPost('/api/friends/accept', { username: r.username }); refreshFriends(); };
-    const declineBtn = document.createElement('button');
-    declineBtn.className = 'btn ghost small'; declineBtn.textContent = 'Decline';
-    declineBtn.onclick = async () => { await apiPost('/api/friends/decline', { username: r.username }); refreshFriends(); };
-    row.appendChild(acceptBtn);
-    row.appendChild(declineBtn);
+    row.className = 'card peoplerow';
+    row.innerHTML = `
+      <div class="avatar small" style="${avatarStyle(r.avatar)}"></div>
+      <div class="info" style="cursor:default;"><span class="uname">${escapeHtml(r.username)} wants to be friends</span></div>
+      <div class="actions">
+        <button class="btn small" data-act="accept">Accept</button>
+        <button class="btn ghost small" data-act="decline">Decline</button>
+      </div>`;
+    row.querySelector('[data-act=accept]').onclick = async () => { await apiPost('/api/friends/accept', { username: r.username }); refreshFriends(); };
+    row.querySelector('[data-act=decline]').onclick = async () => { await apiPost('/api/friends/decline', { username: r.username }); refreshFriends(); };
     reqDiv.appendChild(row);
   });
 
@@ -478,25 +595,27 @@ async function refreshFriends() {
   listDiv.innerHTML = '';
   data.friends.forEach(f => {
     const row = document.createElement('div');
-    row.className = 'card row';
-    row.style.marginBottom = '8px';
-    row.style.alignItems = 'center';
-    row.innerHTML = `<div style="flex:1;display:flex;align-items:center;gap:8px;">
-      <div class="avatar small" style="background-image:url('${f.avatar || ''}')"></div>
-      <span>${escapeHtml(f.username)}</span>
-    </div>`;
-    const challengeBtn = document.createElement('button');
-    challengeBtn.className = 'btn small'; challengeBtn.textContent = 'Challenge';
-    challengeBtn.onclick = async () => {
+    row.className = 'card peoplerow';
+    row.innerHTML = `
+      <div class="avatar small" style="${avatarStyle(f.avatar)}"></div>
+      <div class="info"><span class="uname">${escapeHtml(f.username)}</span></div>
+      <div class="actions">
+        <button class="btn small" data-act="challenge">Challenge</button>
+      </div>`;
+    row.querySelector('.info').onclick = () => openFriendProfile(f.username);
+    row.querySelector('[data-act=challenge]').onclick = async (ev) => {
+      const btn = ev.target;
+      btn.disabled = true;
+      const original = btn.textContent;
       try {
-        const m = await apiPost('/api/friends/challenge', { username: f.username });
-        stopChallengePoll();
-        startGame('duo', m.matchId, { players: m.players, playersDisplay: m.playersDisplay, seed: m.seed });
+        await apiPost('/api/friends/invite', { username: f.username });
+        btn.textContent = 'Invited';
       } catch (e) {
         document.getElementById('friendsError').textContent = e.message;
+        btn.disabled = false;
+        btn.textContent = original;
       }
     };
-    row.appendChild(challengeBtn);
     listDiv.appendChild(row);
   });
 }
@@ -514,6 +633,114 @@ document.getElementById('sendRequestBtn').addEventListener('click', async () => 
   } catch (e) {
     err.textContent = e.message;
   }
+});
+
+/* ---------- friend profile (read-only) ---------- */
+document.getElementById('friendProfileBackBtn').addEventListener('click', () => showView('view-friends'));
+
+async function openFriendProfile(username) {
+  showView('view-friend-profile');
+  document.getElementById('friendProfileTitle').textContent = username;
+  document.getElementById('friendStatWins').textContent = '—';
+  document.getElementById('friendStatSolo').textContent = '—';
+  document.getElementById('friendStatDuo').textContent = '—';
+  const av = document.getElementById('friendProfileAvatar');
+  av.style.backgroundImage = '';
+  av.textContent = '';
+  try {
+    const data = await apiGet('/api/users/' + encodeURIComponent(username));
+    document.getElementById('friendProfileTitle').textContent = data.user.username;
+    document.getElementById('friendStatWins').textContent = data.user.wins || 0;
+    document.getElementById('friendStatSolo').textContent = fmtTime(data.user.soloBest);
+    document.getElementById('friendStatDuo').textContent = fmtTime(data.user.duoBest);
+    av.style.backgroundImage = data.user.avatar ? `url(${data.user.avatar})` : '';
+    av.textContent = data.user.avatar ? '' : data.user.username[0].toUpperCase();
+  } catch (e) {}
+}
+
+/* ---------- invites page ---------- */
+document.getElementById('viewInvitesBtn').addEventListener('click', openInvites);
+document.getElementById('invitesBackBtn').addEventListener('click', () => showView('view-home'));
+
+async function openInvites() {
+  showView('view-invites');
+  await refreshInvitesPage();
+}
+
+async function refreshInvitesPage() {
+  let data;
+  try { data = await apiGet('/api/invites'); } catch (e) { return; }
+  updateInviteBadge(data.incoming.length);
+
+  const inDiv = document.getElementById('incomingInvites');
+  inDiv.innerHTML = '';
+  if (data.incoming.length === 0) inDiv.innerHTML = '<div class="sub">No invites right now.</div>';
+  data.incoming.forEach(inv => {
+    const row = document.createElement('div');
+    row.className = 'card peoplerow';
+    row.innerHTML = `
+      <div class="avatar small" style="${avatarStyle(inv.fromAvatar)}"></div>
+      <div class="info" style="cursor:default;"><span class="uname">${escapeHtml(inv.fromDisplay)} invited you — ${timeAgo(inv.createdAt)}</span></div>
+      <div class="actions">
+        <button class="btn small" data-act="accept">Accept</button>
+        <button class="btn ghost small" data-act="decline">Decline</button>
+      </div>`;
+    row.querySelector('[data-act=accept]').onclick = () => acceptInvite(inv.id);
+    row.querySelector('[data-act=decline]').onclick = async () => { await apiPost(`/api/invites/${inv.id}/decline`, {}); refreshInvitesPage(); };
+    inDiv.appendChild(row);
+  });
+
+  const outDiv = document.getElementById('outgoingInvites');
+  outDiv.innerHTML = '';
+  if (data.outgoing.length === 0) outDiv.innerHTML = '<div class="sub">Nothing sent yet.</div>';
+  data.outgoing.forEach(inv => {
+    const row = document.createElement('div');
+    row.className = 'card peoplerow';
+    row.innerHTML = `
+      <div class="avatar small" style="${avatarStyle(inv.toAvatar)}"></div>
+      <div class="info" style="cursor:default;"><span class="uname">Waiting on ${escapeHtml(inv.toDisplay)} — ${timeAgo(inv.createdAt)}</span></div>
+      <div class="actions">
+        <button class="btn ghost small" data-act="cancel">Cancel</button>
+      </div>`;
+    row.querySelector('[data-act=cancel]').onclick = async () => { await apiPost(`/api/invites/${inv.id}/cancel`, {}); refreshInvitesPage(); };
+    outDiv.appendChild(row);
+  });
+}
+
+async function acceptInvite(id) {
+  try {
+    const m = await apiPost(`/api/invites/${id}/accept`, {});
+    stopChallengePoll();
+    hideInvitePopup();
+    startGame('duo', m.matchId, { players: m.players, playersDisplay: m.playersDisplay, seed: m.seed });
+  } catch (e) {}
+}
+
+function updateInviteBadge(count) {
+  document.getElementById('inviteBadge').textContent = count > 0 ? count : '';
+}
+
+/* ---------- incoming-invite popup ---------- */
+let seenInviteIds = new Set();
+let popupInviteId = null;
+
+function showInvitePopup(inv) {
+  popupInviteId = inv.id;
+  document.getElementById('popupAvatar').style.backgroundImage = inv.fromAvatar ? `url(${inv.fromAvatar})` : '';
+  document.getElementById('popupText').textContent = inv.fromDisplay + ' invited you to a match';
+  document.getElementById('invitePopup').classList.add('active');
+}
+function hideInvitePopup() {
+  popupInviteId = null;
+  document.getElementById('invitePopup').classList.remove('active');
+}
+document.getElementById('popupAcceptBtn').addEventListener('click', () => {
+  if (popupInviteId) acceptInvite(popupInviteId);
+});
+document.getElementById('popupDeclineBtn').addEventListener('click', async () => {
+  const id = popupInviteId;
+  hideInvitePopup();
+  if (id) { try { await apiPost(`/api/invites/${id}/decline`, {}); } catch (e) {} }
 });
 
 /* ---------- leaderboard ---------- */
@@ -542,7 +769,7 @@ async function openLeaderboard() {
   }
 }
 
-/* ---------- ambient challenge polling ---------- */
+/* ---------- ambient polling: random-match pairing + incoming invites ---------- */
 let challengePoll = null;
 function startChallengePoll() {
   stopChallengePoll();
@@ -551,7 +778,21 @@ function startChallengePoll() {
       const data = await apiGet('/api/queue/status');
       if (data.matched) {
         stopChallengePoll();
+        hideInvitePopup();
         startGame('duo', data.matchId, { players: data.players, playersDisplay: data.playersDisplay, seed: data.seed });
+        return;
+      }
+    } catch (e) {}
+    try {
+      const inv = await apiGet('/api/invites');
+      updateInviteBadge(inv.incoming.length);
+      const fresh = inv.incoming.find(i => !seenInviteIds.has(i.id));
+      if (fresh) {
+        seenInviteIds.add(fresh.id);
+        showInvitePopup(fresh);
+      }
+      if (document.getElementById('view-invites').classList.contains('active')) {
+        refreshInvitesPage();
       }
     } catch (e) {}
   }, 2500);
