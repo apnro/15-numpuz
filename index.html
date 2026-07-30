@@ -286,8 +286,7 @@
   </div>
   <button class="btn" id="findMatchBtn">Find Match</button>
   <button class="btn ghost" id="playSoloBtn">Play Solo</button>
-  <button class="btn ghost" id="viewFriendsBtn">Friends</button>
-  <button class="btn ghost" id="viewInvitesBtn">Invites <span id="inviteBadge"></span></button>
+  <button class="btn ghost" id="viewFriendsBtn">Friends <span id="inviteBadge"></span></button>
   <button class="btn ghost" id="viewLeaderboardBtn">Leaderboard</button>
 </div>
 
@@ -325,7 +324,7 @@
   <button class="btn ghost" id="friendProfileBackBtn">Back</button>
 </div>
 
-<!-- FRIENDS -->
+<!-- FRIENDS (incl. match invites) -->
 <div id="view-friends" class="view">
   <h1>Friends</h1>
   <div class="row">
@@ -334,22 +333,12 @@
   </div>
   <div class="error" id="friendsError">&nbsp;</div>
   <div class="scrollarea">
+    <div id="incomingInvites"></div>
+    <div id="outgoingInvites"></div>
     <div id="incomingRequests"></div>
     <div id="friendsList"></div>
   </div>
   <button class="btn ghost" id="friendsBackBtn">Back</button>
-</div>
-
-<!-- INVITES -->
-<div id="view-invites" class="view">
-  <h1>Invites</h1>
-  <div class="scrollarea">
-    <div class="sub" style="margin:0 0 4px 2px;">Incoming</div>
-    <div id="incomingInvites"></div>
-    <div class="sub" style="margin:12px 0 4px 2px;">Sent</div>
-    <div id="outgoingInvites"></div>
-  </div>
-  <button class="btn ghost" id="invitesBackBtn">Back</button>
 </div>
 
 <!-- LEADERBOARD -->
@@ -571,8 +560,44 @@ async function openFriends() {
 }
 
 async function refreshFriends() {
-  let data;
-  try { data = await apiGet('/api/friends'); } catch (e) { return; }
+  let data, invData;
+  try {
+    [data, invData] = await Promise.all([apiGet('/api/friends'), apiGet('/api/invites')]);
+  } catch (e) { return; }
+
+  updateInviteBadge(invData.incoming.length);
+
+  const inInvDiv = document.getElementById('incomingInvites');
+  inInvDiv.innerHTML = '';
+  invData.incoming.forEach(inv => {
+    const row = document.createElement('div');
+    row.className = 'card peoplerow';
+    row.innerHTML = `
+      <div class="avatar small" style="${avatarStyle(inv.fromAvatar)}"></div>
+      <div class="info" style="cursor:default;"><span class="uname">${escapeHtml(inv.fromDisplay)} invited you — ${timeAgo(inv.createdAt)}</span></div>
+      <div class="actions">
+        <button class="btn small" data-act="accept">Accept</button>
+        <button class="btn ghost small" data-act="decline">Decline</button>
+      </div>`;
+    row.querySelector('[data-act=accept]').onclick = () => acceptInvite(inv.id);
+    row.querySelector('[data-act=decline]').onclick = async () => { await apiPost(`/api/invites/${inv.id}/decline`, {}); refreshFriends(); };
+    inInvDiv.appendChild(row);
+  });
+
+  const outInvDiv = document.getElementById('outgoingInvites');
+  outInvDiv.innerHTML = '';
+  invData.outgoing.forEach(inv => {
+    const row = document.createElement('div');
+    row.className = 'card peoplerow';
+    row.innerHTML = `
+      <div class="avatar small" style="${avatarStyle(inv.toAvatar)}"></div>
+      <div class="info" style="cursor:default;"><span class="uname">Waiting on ${escapeHtml(inv.toDisplay)} — ${timeAgo(inv.createdAt)}</span></div>
+      <div class="actions">
+        <button class="btn ghost small" data-act="cancel">Cancel</button>
+      </div>`;
+    row.querySelector('[data-act=cancel]').onclick = async () => { await apiPost(`/api/invites/${inv.id}/cancel`, {}); refreshFriends(); };
+    outInvDiv.appendChild(row);
+  });
 
   const reqDiv = document.getElementById('incomingRequests');
   reqDiv.innerHTML = '';
@@ -609,7 +634,7 @@ async function refreshFriends() {
       const original = btn.textContent;
       try {
         await apiPost('/api/friends/invite', { username: f.username });
-        btn.textContent = 'Invited';
+        refreshFriends();
       } catch (e) {
         document.getElementById('friendsError').textContent = e.message;
         btn.disabled = false;
@@ -656,55 +681,6 @@ async function openFriendProfile(username) {
     av.style.backgroundImage = data.user.avatar ? `url(${data.user.avatar})` : '';
     av.textContent = data.user.avatar ? '' : data.user.username[0].toUpperCase();
   } catch (e) {}
-}
-
-/* ---------- invites page ---------- */
-document.getElementById('viewInvitesBtn').addEventListener('click', openInvites);
-document.getElementById('invitesBackBtn').addEventListener('click', () => showView('view-home'));
-
-async function openInvites() {
-  showView('view-invites');
-  await refreshInvitesPage();
-}
-
-async function refreshInvitesPage() {
-  let data;
-  try { data = await apiGet('/api/invites'); } catch (e) { return; }
-  updateInviteBadge(data.incoming.length);
-
-  const inDiv = document.getElementById('incomingInvites');
-  inDiv.innerHTML = '';
-  if (data.incoming.length === 0) inDiv.innerHTML = '<div class="sub">No invites right now.</div>';
-  data.incoming.forEach(inv => {
-    const row = document.createElement('div');
-    row.className = 'card peoplerow';
-    row.innerHTML = `
-      <div class="avatar small" style="${avatarStyle(inv.fromAvatar)}"></div>
-      <div class="info" style="cursor:default;"><span class="uname">${escapeHtml(inv.fromDisplay)} invited you — ${timeAgo(inv.createdAt)}</span></div>
-      <div class="actions">
-        <button class="btn small" data-act="accept">Accept</button>
-        <button class="btn ghost small" data-act="decline">Decline</button>
-      </div>`;
-    row.querySelector('[data-act=accept]').onclick = () => acceptInvite(inv.id);
-    row.querySelector('[data-act=decline]').onclick = async () => { await apiPost(`/api/invites/${inv.id}/decline`, {}); refreshInvitesPage(); };
-    inDiv.appendChild(row);
-  });
-
-  const outDiv = document.getElementById('outgoingInvites');
-  outDiv.innerHTML = '';
-  if (data.outgoing.length === 0) outDiv.innerHTML = '<div class="sub">Nothing sent yet.</div>';
-  data.outgoing.forEach(inv => {
-    const row = document.createElement('div');
-    row.className = 'card peoplerow';
-    row.innerHTML = `
-      <div class="avatar small" style="${avatarStyle(inv.toAvatar)}"></div>
-      <div class="info" style="cursor:default;"><span class="uname">Waiting on ${escapeHtml(inv.toDisplay)} — ${timeAgo(inv.createdAt)}</span></div>
-      <div class="actions">
-        <button class="btn ghost small" data-act="cancel">Cancel</button>
-      </div>`;
-    row.querySelector('[data-act=cancel]').onclick = async () => { await apiPost(`/api/invites/${inv.id}/cancel`, {}); refreshInvitesPage(); };
-    outDiv.appendChild(row);
-  });
 }
 
 async function acceptInvite(id) {
@@ -791,8 +767,8 @@ function startChallengePoll() {
         seenInviteIds.add(fresh.id);
         showInvitePopup(fresh);
       }
-      if (document.getElementById('view-invites').classList.contains('active')) {
-        refreshInvitesPage();
+      if (document.getElementById('view-friends').classList.contains('active')) {
+        refreshFriends();
       }
     } catch (e) {}
   }, 2500);
