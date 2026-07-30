@@ -255,17 +255,85 @@ app.get('/api/friends', auth, (req, res) => {
   res.json({ friends, requests });
 });
 
-app.post('/api/friends/challenge', auth, ah(async (req, res) => {
+app.post('/api/friends/invite', auth, ah(async (req, res) => {
   const targetKey = ((req.body && req.body.username) || '').trim().toLowerCase();
   const db = req.db;
   const me = db.users[req.username];
   if (!(me.friends || []).includes(targetKey)) return res.status(400).json({ error: 'Not friends' });
   if (!db.users[targetKey]) return res.status(404).json({ error: 'No user with that name' });
 
-  const matchId = createMatchBetween(db, req.username, targetKey);
+  db.invites = db.invites || {};
+  const already = Object.values(db.invites).find(
+    i => (i.from === req.username && i.to === targetKey) || (i.from === targetKey && i.to === req.username)
+  );
+  if (already) return res.status(400).json({ error: 'There is already a pending invite with this player' });
+
+  const id = crypto.randomBytes(8).toString('hex');
+  db.invites[id] = { id, from: req.username, to: targetKey, createdAt: Date.now() };
+  await save(db);
+  res.json({ ok: true, id });
+}));
+
+function inviteView(db, inv) {
+  return {
+    id: inv.id,
+    from: inv.from,
+    to: inv.to,
+    fromDisplay: db.users[inv.from] ? db.users[inv.from].username : inv.from,
+    toDisplay: db.users[inv.to] ? db.users[inv.to].username : inv.to,
+    fromAvatar: db.users[inv.from] ? db.users[inv.from].avatar : '',
+    toAvatar: db.users[inv.to] ? db.users[inv.to].avatar : '',
+    createdAt: inv.createdAt
+  };
+}
+
+app.get('/api/invites', auth, (req, res) => {
+  const db = req.db;
+  db.invites = db.invites || {};
+  const all = Object.values(db.invites);
+  const incoming = all.filter(i => i.to === req.username).map(i => inviteView(db, i));
+  const outgoing = all.filter(i => i.from === req.username).map(i => inviteView(db, i));
+  res.json({ incoming, outgoing });
+});
+
+app.post('/api/invites/:id/accept', auth, ah(async (req, res) => {
+  const db = req.db;
+  db.invites = db.invites || {};
+  const inv = db.invites[req.params.id];
+  if (!inv || inv.to !== req.username) return res.status(404).json({ error: 'Invite not found' });
+
+  const matchId = createMatchBetween(db, inv.from, inv.to);
+  delete db.invites[req.params.id];
   await save(db);
   res.json(matchInfo(db, matchId));
 }));
+
+app.post('/api/invites/:id/decline', auth, ah(async (req, res) => {
+  const db = req.db;
+  db.invites = db.invites || {};
+  const inv = db.invites[req.params.id];
+  if (!inv || inv.to !== req.username) return res.status(404).json({ error: 'Invite not found' });
+  delete db.invites[req.params.id];
+  await save(db);
+  res.json({ ok: true });
+}));
+
+app.post('/api/invites/:id/cancel', auth, ah(async (req, res) => {
+  const db = req.db;
+  db.invites = db.invites || {};
+  const inv = db.invites[req.params.id];
+  if (!inv || inv.from !== req.username) return res.status(404).json({ error: 'Invite not found' });
+  delete db.invites[req.params.id];
+  await save(db);
+  res.json({ ok: true });
+}));
+
+app.get('/api/users/:username', auth, (req, res) => {
+  const key = (req.params.username || '').trim().toLowerCase();
+  const u = req.db.users[key];
+  if (!u) return res.status(404).json({ error: 'No user with that name' });
+  res.json({ user: publicUser(u) });
+});
 
 /* ---------- leaderboard ---------- */
 
