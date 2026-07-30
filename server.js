@@ -2,11 +2,15 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const path = require('path');
-const { load, save } = require('./store');
+const { load, save, USE_REDIS } = require('./store');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname)));
+
+app.get('/api/health', (req, res) => {
+  res.json({ redisConfigured: USE_REDIS });
+});
 
 // wraps an async route handler so thrown errors/rejections become a JSON 500
 // instead of crashing the process or hanging the request
