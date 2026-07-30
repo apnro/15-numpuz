@@ -138,6 +138,7 @@
   }
   .whoami { display: flex; align-items: center; gap: 10px; }
   .whoami .name { color: #fbf1dc; font-size: 15px; }
+  #homeAvatar { cursor: pointer; }
 
   #stats {
     display: flex;
@@ -215,7 +216,6 @@
   </div>
   <button class="btn" id="findMatchBtn">Find Match</button>
   <button class="btn ghost" id="playSoloBtn">Play Solo</button>
-  <button class="btn ghost" id="viewProfileBtn">Profile</button>
   <button class="btn ghost" id="viewFriendsBtn">Friends</button>
   <button class="btn ghost" id="viewLeaderboardBtn">Leaderboard</button>
 </div>
@@ -236,8 +236,8 @@
   <div class="name" id="profileName" style="font-size:17px;color:#fbf1dc;"></div>
   <div class="statgrid card">
     <div class="stat"><div class="num" id="statWins">0</div><div class="lbl">WINS</div></div>
-    <div class="stat"><div class="num" id="statSolo">—</div><div class="lbl">BEST SOLO</div></div>
-    <div class="stat"><div class="num" id="statDuo">—</div><div class="lbl">BEST DUO</div></div>
+    <div class="stat"><div class="num" id="statSolo">—</div><div class="lbl">BEST SOLO TIME</div></div>
+    <div class="stat"><div class="num" id="statDuo">—</div><div class="lbl">BEST MATCH TIME</div></div>
   </div>
   <button class="btn ghost" id="profileBackBtn">Back</button>
 </div>
@@ -376,7 +376,7 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
 })();
 
 /* ---------- profile ---------- */
-document.getElementById('viewProfileBtn').addEventListener('click', () => {
+function openProfile() {
   document.getElementById('profileName').textContent = currentUser.username;
   document.getElementById('statWins').textContent = currentUser.wins || 0;
   document.getElementById('statSolo').textContent = fmtTime(currentUser.soloBest);
@@ -385,7 +385,8 @@ document.getElementById('viewProfileBtn').addEventListener('click', () => {
   av.style.backgroundImage = currentUser.avatar ? `url(${currentUser.avatar})` : '';
   av.textContent = currentUser.avatar ? '' : 'Add photo';
   showView('view-profile');
-});
+}
+document.getElementById('homeAvatar').addEventListener('click', openProfile);
 document.getElementById('profileBackBtn').addEventListener('click', () => showView('view-home'));
 
 function fmtTime(secs) {
@@ -588,12 +589,17 @@ document.getElementById('cancelFindBtn').addEventListener('click', async () => {
 
 function pollForMatch() {
   clearInterval(findingPoll);
+  const searchStart = Date.now();
   findingPoll = setInterval(async () => {
     try {
       const data = await apiGet('/api/queue/status');
       if (data.matched) {
         clearInterval(findingPoll);
         startGame('duo', data.matchId, { players: data.players, playersDisplay: data.playersDisplay, seed: data.seed });
+        return;
+      }
+      if (Date.now() - searchStart > 10000) {
+        document.getElementById('findingSub').textContent = "No one else seems to be online right now — still looking…";
       }
     } catch (e) {}
   }, 1200);
